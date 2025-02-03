@@ -1,0 +1,11 @@
+yarn-error.log
+node_modules/
+.idea/
+*.log
+coverage/
+*.bk
+target/
+.bloop/
+.bsp/
+.metals/
+.vscode/
