@@ -1,4 +1,4 @@
-package com.github.kmizu.skala
+package com.github.kmizu.tskala
 
 import scala.collection.mutable.ListBuffer
 
@@ -13,7 +13,7 @@ case object EOF extends Token
 
 // Lexer for tokenization
 object Lexer {
-  private val keywords = Set("if", "else", "while", "function", "length", "append")
+  private val keywords = Set("if", "else", "while", "function", "length", "append", "Int", "Bool", "String", "List")
 
   def tokenize(src: String): List[Token] = {
     val tokens = ListBuffer[Token]()
@@ -85,6 +85,9 @@ object Lexer {
             tokens += Symbol(">")
             i += 1
           }
+        case ':' =>
+          tokens += Symbol(":")
+          i += 1
         case '+' =>
           if (i + 1 < src.length && src(i + 1) == '+') {
             tokens += Symbol("++")
@@ -197,34 +200,73 @@ object Parser {
     private def parseFunctionBody(): Func = {
       val name = ts.consumeIdentOrFail()
       ts.expectSymbolOrFail("(")
-      val params = ListBuffer[String]()
+      val params = ListBuffer[(String, Type)]()
       if (!ts.acceptSymbol(")")) {
-        params += ts.consumeIdentOrFail()
+        // Parse typed parameters: name : Type
+        params += parseTypedParam()
         while (ts.acceptSymbol(",")) {
-          params += ts.consumeIdentOrFail()
+          params += parseTypedParam()
         }
         ts.expectSymbolOrFail(")")
       }
+      ts.expectSymbolOrFail(":")
+      val returnType = parseType()
       val body = parseBlockOrExp()
-      Func(name, params.toList, body)
+      Func(name, params.toList, returnType, body)
+    }
+    
+    private def parseTypedParam(): (String, Type) = {
+      val name = ts.consumeIdentOrFail()
+      ts.expectSymbolOrFail(":")
+      val typ = parseType()
+      (name, typ)
+    }
+    
+    private def parseType(): Type = {
+      ts.peek match {
+        case Keyword("Int") =>
+          ts.consume()
+          Type.TInt
+        case Keyword("Bool") =>
+          ts.consume()
+          Type.TBool
+        case Keyword("String") =>
+          ts.consume()
+          Type.TString
+        case Keyword("List") =>
+          ts.consume()
+          ts.expectSymbolOrFail("[")
+          val elemType = parseType()
+          ts.expectSymbolOrFail("]")
+          Type.TList(elemType)
+        case t =>
+          throw ParseError(s"Expected type but found $t")
+      }
     }
 
     def parseExpression(): Exp = parseAssignment()
 
     private def parseAssignment(): Exp = {
-      val lhs = parseComparison()
-      lhs match {
-        case Exp.Ident(name) if ts.acceptSymbol("=") =>
-          val rhs = parseExpression()
-          Exp.Assignment(name, rhs)
-        case _ => lhs
+      val e = parseOr()
+      if (ts.acceptSymbol("=")) {
+        e match {
+          case Exp.Ident(name) =>
+            val rhs = parseAssignment()
+            Exp.Assignment(name, rhs)
+          case _ =>
+            sys.error("Left-hand side of assignment must be an identifier")
+        }
+      } else {
+        e
       }
     }
+
+    private def parseOr(): Exp = parseComparison()
 
     private def parseComparison(): Exp = {
       var e = parseAdditive()
       while (ts.peek match {
-          case Symbol("<" | ">" | "<=" | ">=" | "==" | "!=") => true
+          case Symbol("<") | Symbol(">") | Symbol("<=") | Symbol(">=") | Symbol("==") | Symbol("!=") => true
           case _ => false
         }) {
         val Symbol(op) = ts.consume().asInstanceOf[Symbol]
@@ -364,8 +406,14 @@ object Parser {
     }
 
     private def parseBlockOrExp(): Exp = ts.peek match {
-      case Symbol("{") => parseBlock()
-      case _            => parseExpression()
+      case Symbol("{") => 
+        val block = parseBlock()
+        // If block contains only one expression, unwrap it
+        block match {
+          case Exp.SeqExp(List(single)) => single
+          case other => other
+        }
+      case _ => parseExpression()
     }
   }
 

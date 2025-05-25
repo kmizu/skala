@@ -1,6 +1,7 @@
 package com.github.kmizu.skala
 import play.api.libs.json._
 import scala.collection.mutable
+import Value.*
 
 /** Translates a Play JSON value into an AST node.
  *
@@ -53,6 +54,27 @@ def translateToAst(json: JsValue): Exp = json match {
             translateToAst(values(1)) |==| translateToAst(values(2))
           case "!=" =>
             translateToAst(values(1)) |!=| translateToAst(values(2))
+          case "list" =>
+            // Expecting: ["list", elem1, elem2, ...]
+            tList(values.tail.toSeq.map(translateToAst)*)
+          case "list-access" =>
+            // Expecting: ["list-access", list, index]
+            tListAccess(translateToAst(values(1)), translateToAst(values(2)))
+          case "list-length" =>
+            // Expecting: ["list-length", list]
+            tListLength(translateToAst(values(1)))
+          case "list-append" =>
+            // Expecting: ["list-append", list, element]
+            tListAppend(translateToAst(values(1)), translateToAst(values(2)))
+          case "string" =>
+            // Expecting: ["string", "value"]
+            tString(values(1).as[String])
+          case "string-length" =>
+            // Expecting: ["string-length", str]
+            tStringLength(translateToAst(values(1)))
+          case "string-concat" | "++" =>
+            // Expecting: ["string-concat", str1, str2] or ["++", str1, str2]
+            tStringConcat(translateToAst(values(1)), translateToAst(values(2)))
           case other =>
             throw new Exception(s"Unknown operator: $other")
         }
@@ -61,6 +83,8 @@ def translateToAst(json: JsValue): Exp = json match {
     }
   case JsNumber(n) =>
     tInt(n.toInt)
+  case JsString(s) =>
+    tString(s)
   case _ =>
     throw new Exception("Not implemented for: " + Json.stringify(json))
 }
@@ -70,7 +94,11 @@ def translateToAst(json: JsValue): Exp = json match {
   * The JSON program is assumed to be an array where each element is either a function definition or
   * a body expression. A function definition is represented as an array whose first element is "def".
   */
-def evalJsonProgram(jsonString: String): Any = {
+def evalJsonProgramInt(jsonString: String): Int = {
+  evalJsonProgram(jsonString).asInt
+}
+
+def evalJsonProgram(jsonString: String): Value = {
   val json = Json.parse(jsonString)
   json match {
     case JsArray(elems) =>
@@ -96,9 +124,9 @@ def evalJsonProgram(jsonString: String): Any = {
         case _ =>
           throw new Exception("Invalid function definition format")
       }
-      val vEnv = mutable.Map[String, Int]()
+      val vEnv = mutable.Map[String, Value]()
       // Evaluate the bodies sequentially.
-      var result: Any = 0
+      var result: Value = IntValue(0)
       bodies.foreach { jsVal =>
         val ast = translateToAst(jsVal)
         result = eval(ast, vEnv, fEnv)
@@ -113,7 +141,11 @@ def evalJsonProgram(jsonString: String): Any = {
   *
   * This function parses the JSON string, translates it into an AST, and then evaluates it.
   */
-def evalJsonExp(jsonString: String): Int = {
+def evalJsonExpInt(jsonString: String): Int = {
+  evalJsonExp(jsonString).asInt
+}
+
+def evalJsonExp(jsonString: String): Value = {
   val json = Json.parse(jsonString)
   val ast  = translateToAst(json)
   evalExp(ast)

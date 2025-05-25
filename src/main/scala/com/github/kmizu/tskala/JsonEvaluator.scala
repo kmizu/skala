@@ -1,6 +1,18 @@
 package com.github.kmizu.tskala
 import play.api.libs.json._
 import scala.collection.mutable
+import Value.*
+import Type.*
+
+def parseType(typeStr: String): Type = typeStr match {
+  case "TInt" => TInt
+  case "TBool" => TBool
+  case "TString" => TString
+  case s if s.startsWith("TList[") && s.endsWith("]") =>
+    val elemTypeStr = s.substring(6, s.length - 1)
+    TList(parseType(elemTypeStr))
+  case _ => throw new Exception(s"Unknown type: $typeStr")
+}
 
 /** Translates a Play JSON value into an AST node.
  *
@@ -53,6 +65,27 @@ def translateToAst(json: JsValue): Exp = json match {
           case "call" =>
             // Expecting: ["call", functionName, arg1, arg2, ...]
             tCall(values(1).as[String], values.drop(2).toSeq.map(translateToAst)*)
+          case "list" =>
+            // Expecting: ["list", elem1, elem2, ...]
+            tList(values.tail.toSeq.map(translateToAst)*)
+          case "list-access" =>
+            // Expecting: ["list-access", list, index]
+            tListAccess(translateToAst(values(1)), translateToAst(values(2)))
+          case "list-length" =>
+            // Expecting: ["list-length", list]
+            tListLength(translateToAst(values(1)))
+          case "list-append" =>
+            // Expecting: ["list-append", list, element]
+            tListAppend(translateToAst(values(1)), translateToAst(values(2)))
+          case "string" =>
+            // Expecting: ["string", "value"]
+            tString(values(1).as[String])
+          case "string-length" =>
+            // Expecting: ["string-length", str]
+            tStringLength(translateToAst(values(1)))
+          case "string-concat" | "++" =>
+            // Expecting: ["string-concat", str1, str2] or ["++", str1, str2]
+            tStringConcat(translateToAst(values(1)), translateToAst(values(2)))
           case other =>
             throw new Exception(s"Unknown operator: $other")
       case _ =>
@@ -60,6 +93,8 @@ def translateToAst(json: JsValue): Exp = json match {
     }
   case JsNumber(n) =>
     tInt(n.toInt)
+  case JsString(s) =>
+    tString(s)
   case _ =>
     throw new Exception("Not implemented for: " + Json.stringify(json))
 }
@@ -68,7 +103,11 @@ def translateToAst(json: JsValue): Exp = json match {
   *
   * This function parses the JSON string, translates it into an AST, and then evaluates it.
   */
-def evalJsonExp(jsonString: String): Int = {
+def evalJsonExpInt(jsonString: String): Int = {
+  evalJsonExp(jsonString).asInt
+}
+
+def evalJsonExp(jsonString: String): Value = {
   val json = Json.parse(jsonString)
   val ast  = translateToAst(json)
   evalExp(ast)
@@ -79,7 +118,11 @@ def evalJsonExp(jsonString: String): Int = {
   * The JSON program is assumed to be an array where each element is either a function definition or
   * a body expression. A function definition is represented as an array whose first element is "def".
   */
-def evalJsonProgram(jsonString: String): Any =
+def evalJsonProgramInt(jsonString: String): Int = {
+  evalJsonProgram(jsonString).asInt
+}
+
+def evalJsonProgram(jsonString: String): Value =
   val json = Json.parse(jsonString)
   json match {
     case JsArray(elems) =>
@@ -101,19 +144,19 @@ def evalJsonProgram(jsonString: String): Any =
             case JsArray(ps) => 
               ps.map{p => 
                 val vs = p.as[JsArray].value
-                vs(0).as[String] -> Type.valueOf(vs(1).as[String])
+                vs(0).as[String] -> parseType(vs(1).as[String])
               }.toList
             case _ => throw new Exception("Function parameters must be an array")
           }
-          val returnType = Type.valueOf(values(3).as[String] )
+          val returnType = parseType(values(3).as[String])
           val body = translateToAst(values(4))
           fEnv(name) = tFunction(name, params, returnType, body)
         case _ =>
           throw new Exception("Invalid function definition format")
       }
-      val vEnv = mutable.Map[String, Int]()
+      val vEnv = mutable.Map[String, Value]()
       // Evaluate the bodies sequentially.
-      var result: Any = 0
+      var result: Value = IntValue(0)
       bodies.foreach { jsVal =>
         val ast = translateToAst(jsVal)
         result = eval(ast, vEnv, fEnv)

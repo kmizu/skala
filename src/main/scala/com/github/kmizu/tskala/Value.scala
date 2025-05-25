@@ -1,0 +1,28 @@
+package com.github.kmizu.tskala
+
+enum Value {
+  case IntValue(value: Int)
+  case StringValue(value: String)
+  case ListValue(elements: List[Value])
+  
+  def asInt: Int = this match {
+    case IntValue(v) => v
+    case _ => throw new RuntimeException(s"Expected Int but got $this")
+  }
+  
+  def asString: String = this match {
+    case StringValue(v) => v
+    case _ => throw new RuntimeException(s"Expected String but got $this")
+  }
+  
+  def asList: List[Value] = this match {
+    case ListValue(elements) => elements
+    case _ => throw new RuntimeException(s"Expected List but got $this")
+  }
+  
+  def toBool: Boolean = this match {
+    case IntValue(v) => v != 0
+    case StringValue(v) => v.nonEmpty
+    case ListValue(elements) => elements.nonEmpty
+  }
+}

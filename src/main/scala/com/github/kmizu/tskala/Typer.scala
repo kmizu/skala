@@ -19,22 +19,39 @@ object Typer {
       // Integer literals always have type TInt.
       case VInt(_) => 
         TInt
+      // String literals always have type TString.
+      case VString(_) =>
+        TString
       // Look up identifiers in the variable environment.
       case Ident(name) =>
         typeEnv.getOrElse(name, sys.error(s"Undefined identifier: $name"))
       // Binary expressions.
-      case BinExp(op@("+" | "-" | "*" | "/"), lhs, rhs) =>
+      case BinExp("+", lhs, rhs) =>
+        val lType = typeOfRec(lhs)
+        val rType = typeOfRec(rhs)
+        (lType, rType) match {
+          case (TInt, TInt) => TInt
+          case (TString, TString) => TString
+          case _ => sys.error(s"Type error in + operator: operands must both be Int or both be String, got $lType and $rType")
+        }
+      case BinExp(op@("-" | "*" | "/"), lhs, rhs) =>
         val lType = typeOfRec(lhs)
         val rType = typeOfRec(rhs)
         if (lType == TInt && rType == TInt) TInt
         else
           sys.error(s"Type error in arithmetic operator $op: expected Int operands, got $lType and $rType")
-      case BinExp(op@("<" | ">" | "<=" | ">=" | "==" | "!="), lhs, rhs) =>
+      case BinExp(op@("<" | ">" | "<=" | ">="), lhs, rhs) =>
         val lType = typeOfRec(lhs)
         val rType = typeOfRec(rhs)
         if (lType == TInt && rType == TInt) TBool
         else
           sys.error(s"Type error in comparison operator $op: expected Int operands, got $lType and $rType")
+      case BinExp(op@("==" | "!="), lhs, rhs) =>
+        val lType = typeOfRec(lhs)
+        val rType = typeOfRec(rhs)
+        if (lType == rType) TBool
+        else
+          sys.error(s"Type error in comparison operator $op: operands must have the same type, got $lType and $rType")
       case BinExp(op, lhs, rhs) =>
         sys.error(s"Unknown operator in type checking: $op")
       // If–expressions: the condition must be Boolean and the two branches must have the same type.
@@ -92,6 +109,62 @@ object Typer {
           case None =>
             sys.error(s"Undefined function in type checking: '$name'")
         }
+      // List literal: all elements must have the same type
+      case VList(elements) =>
+        if (elements.isEmpty) {
+          // Empty list - we need to infer the type from context or use a default
+          // For now, we'll default to List[Int]
+          TList(TInt)
+        } else {
+          val firstType = typeOfRec(elements.head)
+          elements.tail.foreach { elem =>
+            val elemType = typeOfRec(elem)
+            if (elemType != firstType)
+              sys.error(s"Type error in list literal: all elements must have the same type, but found $firstType and $elemType")
+          }
+          TList(firstType)
+        }
+      // List access: list[index]
+      case ListAccess(list, index) =>
+        val listType = typeOfRec(list)
+        val indexType = typeOfRec(index)
+        if (indexType != TInt)
+          sys.error(s"Type error in list access: index must be Int, got $indexType")
+        listType match {
+          case TList(elemType) => elemType
+          case _ => sys.error(s"Type error in list access: expected List type, got $listType")
+        }
+      // List length: returns Int
+      case ListLength(list) =>
+        val listType = typeOfRec(list)
+        listType match {
+          case TList(_) => TInt
+          case _ => sys.error(s"Type error in list length: expected List type, got $listType")
+        }
+      // List append: returns a new list of the same type
+      case ListAppend(list, element) =>
+        val listType = typeOfRec(list)
+        val elemType = typeOfRec(element)
+        listType match {
+          case TList(expectedElemType) =>
+            if (elemType != expectedElemType)
+              sys.error(s"Type error in list append: expected element of type $expectedElemType, got $elemType")
+            listType
+          case _ => sys.error(s"Type error in list append: expected List type, got $listType")
+        }
+      // String length: returns Int
+      case StringLength(str) =>
+        val strType = typeOfRec(str)
+        if (strType != TString)
+          sys.error(s"Type error in string length: expected String, got $strType")
+        TInt
+      // String concatenation: returns String
+      case StringConcat(lhs, rhs) =>
+        val lType = typeOfRec(lhs)
+        val rType = typeOfRec(rhs)
+        if (lType != TString || rType != TString)
+          sys.error(s"Type error in string concatenation: expected String operands, got $lType and $rType")
+        TString
     }
     typeOfRec(e)
   }

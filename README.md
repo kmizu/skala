@@ -13,6 +13,7 @@ SkalaはScala 3で実装されたトイプログラミング言語です。
   - 連接
   - 条件分岐
   - 繰り返し
+  - リスト
 - 関数定義 / 呼び出しがある
 
 # 数式
@@ -75,6 +76,17 @@ tSequence(
 ) // x = 0; while (x < 10) { x = x + 1 }; x
 ```
 
+# リスト
+
+リストは次のように書きます
+
+```scala
+tList(tInt(1), tInt(2), tInt(3)) // [1, 2, 3]
+tListAccess(tId("list"), tInt(0)) // list[0]
+tListLength(tId("list")) // length(list)
+tListAppend(tId("list"), tInt(4)) // append(list, 4)
+```
+
 # 関数定義
 
 関数定義は次のように書きます
@@ -84,3 +96,38 @@ tProgram(
   tFunction("add", ["x", "y"], tAdd("x", "y")),
   tCall("add", 1, 2)
 ) // function add(x, y) { x + y }; add(1, 2)
+```
+
+# TSkala (型付きSkala)
+
+TSkalaはSkalaの型付きバージョンで、静的型チェックをサポートします。
+
+## 型システム
+
+- `Int`: 整数型
+- `Bool`: 真偽値型（比較演算の結果）
+- `List[T]`: リスト型（Tは要素の型）
+
+## 構文
+
+TSkalaは独自のパーサーを持ち、型注釈付きの構文をサポートします：
+
+```scala
+// 型付き関数定義
+function sumList(lst: List[Int]): Int {
+  sum = 0;
+  i = 0;
+  while (i < length(lst)) {
+    sum = sum + lst[i];
+    i = i + 1
+  };
+  sum
+}
+
+// リスト操作
+nums = [1, 2, 3, 4, 5];
+result = sumList(nums);
+
+// ネストしたリスト
+matrix: List[List[Int]] = [[1, 2], [3, 4]];
+element = matrix[0][1]; // 2
