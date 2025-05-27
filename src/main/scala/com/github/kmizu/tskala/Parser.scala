@@ -13,7 +13,7 @@ case object EOF extends Token
 
 // Lexer for tokenization
 object Lexer {
-  private val keywords = Set("if", "else", "while", "function", "length", "append", "Int", "Bool", "String", "List", "Dict", "keys", "values", "size", "contains")
+  private val keywords = Set("if", "else", "while", "function", "length", "append", "Int", "Bool", "String", "List", "Dict", "keys", "values", "size", "contains", "let", "in", "lambda", "fn")
 
   def tokenize(src: String): List[Token] = {
     val tokens = ListBuffer[Token]()
@@ -62,6 +62,9 @@ object Lexer {
           if (i + 1 < src.length && src(i + 1) == '=') {
             tokens += Symbol("==")
             i += 2
+          } else if (i + 1 < src.length && src(i + 1) == '>') {
+            tokens += Symbol("=>")
+            i += 2
           } else {
             tokens += Symbol("=")
             i += 1
@@ -96,7 +99,15 @@ object Lexer {
             tokens += Symbol("+")
             i += 1
           }
-        case c @ ('-' | '*' | '/' | '(' | ')' | '{' | '}' | ';' | ',' | '[' | ']' | ':') =>
+        case '-' =>
+          if (i + 1 < src.length && src(i + 1) == '>') {
+            tokens += Symbol("->")
+            i += 2
+          } else {
+            tokens += Symbol("-")
+            i += 1
+          }
+        case c @ ('*' | '/' | '(' | ')' | '{' | '}' | ';' | ',' | '[' | ']' | ':') =>
           tokens += Symbol(c.toString)
           i += 1
         case _ =>
@@ -249,6 +260,24 @@ object Parser {
           val valueType = parseType()
           ts.expectSymbolOrFail("]")
           Type.TDict(keyType, valueType)
+        case Ident(name) if name.head.isLower =>
+          // Type variables start with lowercase
+          ts.consume()
+          Type.TVar(name)
+        case Symbol("(") =>
+          // Function types: (T1, T2, ...) -> T
+          ts.consume()
+          val paramTypes = ListBuffer[Type]()
+          if (!ts.acceptSymbol(")")) {
+            paramTypes += parseType()
+            while (ts.acceptSymbol(",")) {
+              paramTypes += parseType()
+            }
+            ts.expectSymbolOrFail(")")
+          }
+          ts.expectSymbolOrFail("->")
+          val returnType = parseType()
+          Type.TFunc(paramTypes.toList, returnType)
         case t =>
           throw ParseError(s"Expected type but found $t")
       }
@@ -325,6 +354,22 @@ object Parser {
             val index = parseExpression()
             ts.expectSymbolOrFail("]")
             e = Exp.ListAccess(e, index)
+          case Symbol("(") =>
+            // Function application
+            ts.consume()
+            val args = ListBuffer[Exp]()
+            if (!ts.acceptSymbol(")")) {
+              args += parseExpression()
+              while (ts.acceptSymbol(",")) {
+                args += parseExpression()
+              }
+              ts.expectSymbolOrFail(")")
+            }
+            // For backward compatibility, convert Ident to Call
+            e = e match {
+              case Exp.Ident(name) => Exp.Call(name, args.toList)
+              case _ => Exp.Apply(e, args.toList)
+            }
           case _ =>
             done = true
         }
@@ -337,19 +382,7 @@ object Parser {
       case StringLit(v) => ts.consume(); Exp.VString(v)
       case Ident(name) =>
         ts.consume()
-        if (ts.acceptSymbol("(")) {
-          val args = ListBuffer[Exp]()
-          if (!ts.acceptSymbol(")")) {
-            args += parseExpression()
-            while (ts.acceptSymbol(",")) {
-              args += parseExpression()
-            }
-            ts.expectSymbolOrFail(")")
-          }
-          Exp.Call(name, args.toList)
-        } else {
-          Exp.Ident(name)
-        }
+        Exp.Ident(name)
       case Symbol("[") =>
         ts.consume()
         val elements = ListBuffer[Exp]()
@@ -432,6 +465,37 @@ object Parser {
         val key = parseExpression()
         ts.expectSymbolOrFail(")")
         Exp.DictContains(dict, key)
+      case Keyword("let") =>
+        ts.consume()
+        val name = ts.consumeIdentOrFail()
+        ts.expectSymbolOrFail("=")
+        val value = parseExpression()
+        ts.expectKeywordOrFail("in")
+        val body = parseExpression()
+        Exp.Let(name, value, body)
+      case Keyword("lambda") | Keyword("fn") =>
+        ts.consume()
+        // Parse parameters
+        val params = if (ts.acceptSymbol("(")) {
+          val ps = ListBuffer[String]()
+          if (!ts.acceptSymbol(")")) {
+            ps += ts.consumeIdentOrFail()
+            while (ts.acceptSymbol(",")) {
+              ps += ts.consumeIdentOrFail()
+            }
+            ts.expectSymbolOrFail(")")
+          }
+          ps.toList
+        } else {
+          // Single parameter without parentheses
+          List(ts.consumeIdentOrFail())
+        }
+        // Expect arrow or =>
+        if (!ts.acceptSymbol("->") && !ts.acceptSymbol("=>")) {
+          throw ParseError(s"Expected '->' or '=>' after lambda parameters")
+        }
+        val body = parseExpression()
+        Exp.Lambda(params, body)
       case t =>
         sys.error(s"Unexpected token: $t")
     }
