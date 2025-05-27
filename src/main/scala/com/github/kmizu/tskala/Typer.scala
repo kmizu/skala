@@ -5,301 +5,461 @@ import Exp._
 import Type._
 
 object Typer {
-
-  /**
-   * Compute the type of an expression.
-   *
-   * @param e an expression node
-   * @param typeEnv  a mutable mapping from variable names to their types
-   * @param funcEnv  an immutable mapping from function names to their definitions
-   * @return the type (Type) of the AST node, if it type–checks
-   */
-  def typeOf(e: Exp, typeEnv: mutable.Map[String, Type], funcEnv: mutable.Map[String, Func]): Type = {
-    def typeOfRec(e: Exp): Type = e match {
-      // Integer literals always have type TInt.
-      case VInt(_) => 
-        TInt
-      // String literals always have type TString.
-      case VString(_) =>
-        TString
-      // Look up identifiers in the variable environment.
-      case Ident(name) =>
-        typeEnv.getOrElse(name, sys.error(s"Undefined identifier: $name"))
-      // Binary expressions.
-      case BinExp("+", lhs, rhs) =>
-        val lType = typeOfRec(lhs)
-        val rType = typeOfRec(rhs)
-        (lType, rType) match {
-          case (TInt, TInt) => TInt
-          case (TString, TString) => TString
-          case _ => sys.error(s"Type error in + operator: operands must both be Int or both be String, got $lType and $rType")
-        }
-      case BinExp(op@("-" | "*" | "/"), lhs, rhs) =>
-        val lType = typeOfRec(lhs)
-        val rType = typeOfRec(rhs)
-        if (lType == TInt && rType == TInt) TInt
-        else
-          sys.error(s"Type error in arithmetic operator $op: expected Int operands, got $lType and $rType")
-      case BinExp(op@("<" | ">" | "<=" | ">="), lhs, rhs) =>
-        val lType = typeOfRec(lhs)
-        val rType = typeOfRec(rhs)
-        if (lType == TInt && rType == TInt) TBool
-        else
-          sys.error(s"Type error in comparison operator $op: expected Int operands, got $lType and $rType")
-      case BinExp(op@("==" | "!="), lhs, rhs) =>
-        val lType = typeOfRec(lhs)
-        val rType = typeOfRec(rhs)
-        if (lType == rType) TBool
-        else
-          sys.error(s"Type error in comparison operator $op: operands must have the same type, got $lType and $rType")
-      case BinExp(op, lhs, rhs) =>
-        sys.error(s"Unknown operator in type checking: $op")
-      // If–expressions: the condition must be Boolean and the two branches must have the same type.
-      case If(condition, thenClause, elseClause) =>
-        val condType = typeOfRec(condition)
-        // Allow Bool, Int, String, List, and Dict types in if conditions (truthy/falsy semantics)
-        condType match {
-          case TBool | TInt | TString | TList(_) | TDict(_, _) => // OK
-          case _ => sys.error(s"Type error in if condition: expected Bool, got $condType")
-        }
-        val thenType = typeOfRec(thenClause)
-        val elseType = typeOfRec(elseClause)
-        if (thenType != elseType)
-          sys.error(s"Type error in if branches: then branch has type $thenType but else branch has type $elseType")
-        thenType
-      // Sequence expressions: type–check each expression in order and return the type of the last one.
-      case SeqExp(bodies) =>
-        var resultType: Type = TInt  // default value; will be updated below
-        bodies.foreach { expr =>
-          resultType = typeOfRec(expr)
-        }
-        resultType
-      // While loops: the condition must be Boolean and we check the bodies.
-      // (Since the evaluator returns 0 for while loops, we assign them type TInt.)
-      case While(condition, bodies) =>
-        val condType = typeOfRec(condition)
-        // Allow Bool, Int, String, List, and Dict types in while conditions (truthy/falsy semantics)
-        condType match {
-          case TBool | TInt | TString | TList(_) | TDict(_, _) => // OK
-          case _ => sys.error(s"Type error in while condition: expected Bool, got $condType")
-        }
-        bodies.foreach { expr =>
-          typeOfRec(expr)
-        }
-        TInt
-      // Assignments: type–check the right–hand side and
-      // if the variable already exists, its type must match the new value.
-      // Otherwise, we “declare” it in the environment.
-      case Assignment(name, expression) =>
-        val exprType = typeOfRec(expression)
-        if (typeEnv.contains(name)) {
-          val existingType = typeEnv(name)
-          if (existingType != exprType)
-            sys.error(s"Type error in assignment to '$name': variable already has type $existingType, but expression is $exprType")
-        } else {
-          typeEnv(name) = exprType  // implicit declaration
-        }
-        exprType
-      // Function calls: look up the function and check that the argument list agrees with the parameters.
-      case Call(name, args) =>
-        funcEnv.get(name) match {
-          case Some(Func(_, params, retType, _)) =>
-            if (params.length != args.length)
-              sys.error(s"Type error in function call '$name': expected ${params.length} arguments, got ${args.length}")
-            params.zip(args).foreach { case ((paramName, paramType), arg) =>
-              val argType = typeOfRec(arg)
-              if (argType != paramType)
-                sys.error(s"Type error in function call '$name': expected argument of type $paramType for parameter '$paramName', but got $argType")
-            }
-            retType
-          case None =>
-            sys.error(s"Undefined function in type checking: '$name'")
-        }
-      // List literal: all elements must have the same type
-      case VList(elements) =>
-        if (elements.isEmpty) {
-          // Empty list - we need to infer the type from context or use a default
-          // For now, we'll default to List[Int]
-          TList(TInt)
-        } else {
-          val firstType = typeOfRec(elements.head)
-          elements.tail.foreach { elem =>
-            val elemType = typeOfRec(elem)
-            if (elemType != firstType)
-              sys.error(s"Type error in list literal: all elements must have the same type, but found $firstType and $elemType")
-          }
-          TList(firstType)
-        }
-      // List access: list[index]
-      case ListAccess(list, index) =>
-        val listType = typeOfRec(list)
-        val indexType = typeOfRec(index)
-        if (indexType != TInt)
-          sys.error(s"Type error in list access: index must be Int, got $indexType")
-        listType match {
-          case TList(elemType) => elemType
-          case _ => sys.error(s"Type error in list access: expected List type, got $listType")
-        }
-      // List length: returns Int
-      case ListLength(list) =>
-        val listType = typeOfRec(list)
-        listType match {
-          case TList(_) => TInt
-          case _ => sys.error(s"Type error in list length: expected List type, got $listType")
-        }
-      // List append: returns a new list of the same type
-      case ListAppend(list, element) =>
-        val listType = typeOfRec(list)
-        val elemType = typeOfRec(element)
-        listType match {
-          case TList(expectedElemType) =>
-            if (elemType != expectedElemType)
-              sys.error(s"Type error in list append: expected element of type $expectedElemType, got $elemType")
-            listType
-          case _ => sys.error(s"Type error in list append: expected List type, got $listType")
-        }
-      // String length: returns Int
-      case StringLength(str) =>
-        val strType = typeOfRec(str)
-        if (strType != TString)
-          sys.error(s"Type error in string length: expected String, got $strType")
-        TInt
-      // String concatenation: returns String
-      case StringConcat(lhs, rhs) =>
-        val lType = typeOfRec(lhs)
-        val rType = typeOfRec(rhs)
-        if (lType != TString || rType != TString)
-          sys.error(s"Type error in string concatenation: expected String operands, got $lType and $rType")
-        TString
-      // Dictionary literal: all keys must have same type, all values must have same type
-      case VDict(entries) =>
-        if (entries.isEmpty) {
-          // Empty dict - default to Dict[String, Int]
-          TDict(TString, TInt)
-        } else {
-          val (firstKey, firstValue) = entries.head
-          val keyType = typeOfRec(firstKey)
-          val valueType = typeOfRec(firstValue)
-          entries.tail.foreach { case (k, v) =>
-            val kType = typeOfRec(k)
-            val vType = typeOfRec(v)
-            if (kType != keyType)
-              sys.error(s"Type error in dict literal: all keys must have the same type, but found $keyType and $kType")
-            if (vType != valueType)
-              sys.error(s"Type error in dict literal: all values must have the same type, but found $valueType and $vType")
-          }
-          TDict(keyType, valueType)
-        }
-      // Dictionary access: dict[key]
-      case DictAccess(dict, key) =>
-        val dictType = typeOfRec(dict)
-        val keyType = typeOfRec(key)
-        dictType match {
-          case TDict(expectedKeyType, valueType) =>
-            if (keyType != expectedKeyType)
-              sys.error(s"Type error in dict access: expected key of type $expectedKeyType, got $keyType")
-            valueType
-          case _ => sys.error(s"Type error in dict access: expected Dict type, got $dictType")
-        }
-      // Dictionary set: returns updated dictionary
-      case DictSet(dict, key, value) =>
-        val dictType = typeOfRec(dict)
-        val keyType = typeOfRec(key)
-        val valueType = typeOfRec(value)
-        dictType match {
-          case TDict(expectedKeyType, expectedValueType) =>
-            if (keyType != expectedKeyType)
-              sys.error(s"Type error in dict set: expected key of type $expectedKeyType, got $keyType")
-            if (valueType != expectedValueType)
-              sys.error(s"Type error in dict set: expected value of type $expectedValueType, got $valueType")
-            dictType
-          case _ => sys.error(s"Type error in dict set: expected Dict type, got $dictType")
-        }
-      // Dictionary keys: returns List of keys
-      case DictKeys(dict) =>
-        val dictType = typeOfRec(dict)
-        dictType match {
-          case TDict(keyType, _) => TList(keyType)
-          case _ => sys.error(s"Type error in dict keys: expected Dict type, got $dictType")
-        }
-      // Dictionary values: returns List of values
-      case DictValues(dict) =>
-        val dictType = typeOfRec(dict)
-        dictType match {
-          case TDict(_, valueType) => TList(valueType)
-          case _ => sys.error(s"Type error in dict values: expected Dict type, got $dictType")
-        }
-      // Dictionary size: returns Int
-      case DictSize(dict) =>
-        val dictType = typeOfRec(dict)
-        dictType match {
-          case TDict(_, _) => TInt
-          case _ => sys.error(s"Type error in dict size: expected Dict type, got $dictType")
-        }
-      // Dictionary contains: returns Bool
-      case DictContains(dict, key) =>
-        val dictType = typeOfRec(dict)
-        val keyType = typeOfRec(key)
-        dictType match {
-          case TDict(expectedKeyType, _) =>
-            if (keyType != expectedKeyType)
-              sys.error(s"Type error in dict contains: expected key of type $expectedKeyType, got $keyType")
-            TBool
-          case _ => sys.error(s"Type error in dict contains: expected Dict type, got $dictType")
-        }
-    }
-    typeOfRec(e)
+  case class TypeEnv(
+    vars: Map[String, TypeScheme],
+    funcs: Map[String, Func]
+  ) {
+    def +(binding: (String, TypeScheme)): TypeEnv = 
+      copy(vars = vars + binding)
+    
+    def ++(bindings: Map[String, TypeScheme]): TypeEnv = 
+      copy(vars = vars ++ bindings)
+    
+    def freeTypeVars: Set[String] = 
+      vars.values.flatMap(scheme => Type.freeTypeVars(scheme.tpe) -- scheme.typeVars).toSet
   }
-
-  /**
-   * Type–check a function definition.
-   *
-   * This method builds a new variable environment that maps the function parameters
-   * to their declared types, then type–checks the function body and compares the result
-   * with the declared return type.
-   */
-  def typeCheckFunction(func: Func, funcEnv: mutable.Map[String, Func]): Unit = {
-    // Create a fresh variable environment for the function body.
-    val typeEnv = mutable.Map[String, Type]()
-    // Add each parameter to the environment.
-    func.params.foreach { case (paramName, paramType) =>
-      typeEnv(paramName) = paramType
-    }
-    // Compute the type of the body.
-    val bodyType = typeOf(func.body, typeEnv, funcEnv)
-    if (bodyType != func.returnType)
-      sys.error(s"Type error in '${func.name}': body type $bodyType does not match declared return type ${func.returnType}")
+  
+  case class Substitution(map: Map[String, Type]) {
+    def apply(t: Type): Type = substitute(map, t)
+    
+    def apply(scheme: TypeScheme): TypeScheme = 
+      TypeScheme(scheme.typeVars, substitute(map -- scheme.typeVars, scheme.tpe))
+    
+    def apply(env: TypeEnv): TypeEnv = 
+      env.copy(vars = env.vars.view.mapValues(apply).toMap)
+    
+    def compose(that: Substitution): Substitution = 
+      Substitution(that.map ++ map.view.mapValues(t => substitute(that.map, t)).toMap)
   }
-
-  /**
-   * Type–check an entire program.
-   *
-   * First, we build a function environment from the top–level function definitions,
-   * then we type–check each function and finally the program bodies.
-   *
-   * @param prog the AST for the program
-   * @return the type of the final body expression (typically expected to be TInt)
-   */
-  def typeCheckProgram(prog: Program): Type = {
-    val functions = prog.functions
-    val bodies = prog.bodies
-    // Build the function environment.
-    val env: Map[String, Func] = functions.collect {
-      case f @ Func(name, params, retType, body) => name -> f
+  
+  object Substitution {
+    val empty = Substitution(Map.empty)
+  }
+  
+  def generalize(env: TypeEnv, t: Type): TypeScheme = {
+    val envFreeVars = env.freeTypeVars
+    val typeFreeVars = freeTypeVars(t)
+    val generalizedVars = (typeFreeVars -- envFreeVars).toList.sorted
+    TypeScheme(generalizedVars, t)
+  }
+  
+  def instantiate(scheme: TypeScheme): Type = {
+    val freshVars = scheme.typeVars.map(_ -> freshTypeVar()).toMap
+    substitute(freshVars, scheme.tpe)
+  }
+  
+  def unify(t1: Type, t2: Type): Substitution = (t1, t2) match {
+    case (TInt, TInt) => Substitution.empty
+    case (TBool, TBool) => Substitution.empty
+    case (TString, TString) => Substitution.empty
+    case (TVar(name1), TVar(name2)) if name1 == name2 => Substitution.empty
+    case (TVar(name), t) => 
+      if (freeTypeVars(t).contains(name))
+        sys.error(s"Occurs check failed: $name occurs in $t")
+      else
+        Substitution(Map(name -> t))
+    case (t, TVar(name)) => 
+      if (freeTypeVars(t).contains(name))
+        sys.error(s"Occurs check failed: $name occurs in $t")
+      else
+        Substitution(Map(name -> t))
+    case (TList(elem1), TList(elem2)) => 
+      unify(elem1, elem2)
+    case (TDict(key1, val1), TDict(key2, val2)) =>
+      val s1 = unify(key1, key2)
+      val s2 = unify(s1(val1), s1(val2))
+      s2.compose(s1)
+    case (TFunc(params1, ret1), TFunc(params2, ret2)) =>
+      if (params1.length != params2.length)
+        sys.error(s"Cannot unify functions with different arities: ${params1.length} vs ${params2.length}")
+      val paramPairs = params1.zip(params2)
+      val (finalSubst, _) = paramPairs.foldLeft((Substitution.empty, Substitution.empty)) {
+        case ((accSubst, composedSubst), (p1, p2)) =>
+          val s = unify(composedSubst(p1), composedSubst(p2))
+          (accSubst.compose(s), composedSubst.compose(s))
+      }
+      val retSubst = unify(finalSubst(ret1), finalSubst(ret2))
+      retSubst.compose(finalSubst)
+    case _ => 
+      sys.error(s"Cannot unify $t1 with $t2")
+  }
+  
+  def infer(exp: Exp, env: TypeEnv): (Substitution, Type) = exp match {
+    case VInt(_) => (Substitution.empty, TInt)
+    
+    case VString(_) => (Substitution.empty, TString)
+    
+    case Ident(name) =>
+      env.vars.get(name) match {
+        case Some(scheme) => (Substitution.empty, instantiate(scheme))
+        case None => sys.error(s"Undefined identifier: $name")
+      }
+    
+    case BinExp("+", lhs, rhs) =>
+      val (s1, t1) = infer(lhs, env)
+      val (s2, t2) = infer(rhs, s1(env))
+      val resultType = freshTypeVar()
+      val s3 = unify(s2(t1), s2(t2))
+      val s4 = s3(s2(t1)) match {
+        case TInt => unify(s3(resultType), TInt)
+        case TString => unify(s3(resultType), TString)
+        case t => sys.error(s"Type error in + operator: operands must be Int or String, got $t")
+      }
+      (s4.compose(s3).compose(s2).compose(s1), s4(resultType))
+    
+    case BinExp(op@("-" | "*" | "/"), lhs, rhs) =>
+      val (s1, t1) = infer(lhs, env)
+      val (s2, t2) = infer(rhs, s1(env))
+      val s3 = unify(s2(t1), TInt)
+      val s4 = unify(s3(s2(t2)), TInt)
+      (s4.compose(s3).compose(s2).compose(s1), TInt)
+    
+    case BinExp(op@("<" | ">" | "<=" | ">="), lhs, rhs) =>
+      val (s1, t1) = infer(lhs, env)
+      val (s2, t2) = infer(rhs, s1(env))
+      val s3 = unify(s2(t1), TInt)
+      val s4 = unify(s3(s2(t2)), TInt)
+      (s4.compose(s3).compose(s2).compose(s1), TBool)
+    
+    case BinExp(op@("==" | "!="), lhs, rhs) =>
+      val (s1, t1) = infer(lhs, env)
+      val (s2, t2) = infer(rhs, s1(env))
+      val s3 = unify(s2(t1), s2(t2))
+      (s3.compose(s2).compose(s1), TBool)
+    
+    case If(condition, thenClause, elseClause) =>
+      val (s1, condType) = infer(condition, env)
+      // Allow truthy types
+      condType match {
+        case TBool | TInt | TString | TList(_) | TDict(_, _) | TVar(_) => // OK
+        case _ => sys.error(s"Type error in if condition: invalid type $condType")
+      }
+      val (s2, thenType) = infer(thenClause, s1(env))
+      val (s3, elseType) = infer(elseClause, s2(s1(env)))
+      val s4 = unify(s3(thenType), elseType)
+      (s4.compose(s3).compose(s2).compose(s1), s4(elseType))
+    
+    case SeqExp(bodies) if bodies.isEmpty =>
+      (Substitution.empty, TInt)
+    
+    case SeqExp(bodies) =>
+      val (finalSubst, finalType) = bodies.foldLeft((Substitution.empty, TInt: Type)) {
+        case ((accSubst, _), expr) =>
+          val (s, t) = infer(expr, accSubst(env))
+          (s.compose(accSubst), t)
+      }
+      (finalSubst, finalType)
+    
+    case While(condition, bodies) =>
+      val (s1, condType) = infer(condition, env)
+      // Allow truthy types
+      condType match {
+        case TBool | TInt | TString | TList(_) | TDict(_, _) | TVar(_) => // OK
+        case _ => sys.error(s"Type error in while condition: invalid type $condType")
+      }
+      // For while loops, we need to ensure variables assigned inside are visible
+      val (finalSubst, _, _) = bodies.foldLeft((s1, TInt: Type, env)) { 
+        case ((accSubst, _, accEnv), expr) =>
+          val (s, t, newEnv) = inferWithEnv(expr, accSubst(accEnv))
+          (s.compose(accSubst), t, newEnv)
+      }
+      (finalSubst, TInt)
+    
+    case Assignment(name, expression) =>
+      val (s1, exprType) = infer(expression, env)
+      // For assignments, we need to check if variable exists
+      env.vars.get(name) match {
+        case Some(scheme) =>
+          val existingType = instantiate(scheme)
+          val s2 = unify(s1(exprType), s1(existingType))
+          (s2.compose(s1), s2(s1(exprType)))
+        case None =>
+          // New variable - will be added to environment by caller
+          (s1, exprType)
+      }
+    
+    case Call(name, args) =>
+      env.funcs.get(name) match {
+        case Some(Func(_, params, retType, _)) =>
+          if (params.length != args.length)
+            sys.error(s"Function '$name' expects ${params.length} arguments, got ${args.length}")
+          
+          val (finalSubst, argTypes) = args.foldLeft((Substitution.empty, List.empty[Type])) {
+            case ((accSubst, types), arg) =>
+              val (s, t) = infer(arg, accSubst(env))
+              (s.compose(accSubst), types :+ t)
+          }
+          
+          val funcType = TFunc(params.map(_._2), retType)
+          val freshFuncType = instantiate(TypeScheme(freeTypeVars(funcType).toList, funcType))
+          
+          freshFuncType match {
+            case TFunc(paramTypes, freshRetType) =>
+              val unifySubst = paramTypes.zip(argTypes).foldLeft(finalSubst) {
+                case (accSubst, (paramType, argType)) =>
+                  val s = unify(accSubst(paramType), accSubst(argType))
+                  s.compose(accSubst)
+              }
+              (unifySubst, unifySubst(freshRetType))
+            case _ => sys.error("Internal error: function type expected")
+          }
+          
+        case None => sys.error(s"Undefined function: '$name'")
+      }
+    
+    case VList(elements) =>
+      if (elements.isEmpty) {
+        val elemType = freshTypeVar()
+        (Substitution.empty, TList(elemType))
+      } else {
+        val (s1, firstType) = infer(elements.head, env)
+        val (finalSubst, _) = elements.tail.foldLeft((s1, firstType)) {
+          case ((accSubst, expectedType), elem) =>
+            val (s, elemType) = infer(elem, accSubst(env))
+            val unifySubst = unify(s(accSubst(expectedType)), s(elemType))
+            (unifySubst.compose(s).compose(accSubst), unifySubst(s(elemType)))
+        }
+        (finalSubst, TList(finalSubst(firstType)))
+      }
+    
+    case ListAccess(list, index) =>
+      val (s1, listType) = infer(list, env)
+      val (s2, indexType) = infer(index, s1(env))
+      val elemType = freshTypeVar()
+      val s3 = unify(s2(s1(listType)), TList(elemType))
+      val s4 = unify(s3(s2(indexType)), TInt)
+      (s4.compose(s3).compose(s2).compose(s1), s4(s3(elemType)))
+    
+    case ListLength(list) =>
+      val (s1, listType) = infer(list, env)
+      val elemType = freshTypeVar()
+      val s2 = unify(s1(listType), TList(elemType))
+      (s2.compose(s1), TInt)
+    
+    case ListAppend(list, element) =>
+      val (s1, listType) = infer(list, env)
+      val (s2, elemType) = infer(element, s1(env))
+      val expectedElemType = freshTypeVar()
+      val s3 = unify(s2(s1(listType)), TList(expectedElemType))
+      val s4 = unify(s3(s2(elemType)), s3(expectedElemType))
+      (s4.compose(s3).compose(s2).compose(s1), s4(s3(TList(expectedElemType))))
+    
+    case StringLength(str) =>
+      val (s1, strType) = infer(str, env)
+      val s2 = unify(s1(strType), TString)
+      (s2.compose(s1), TInt)
+    
+    case StringConcat(lhs, rhs) =>
+      val (s1, lType) = infer(lhs, env)
+      val (s2, rType) = infer(rhs, s1(env))
+      val s3 = unify(s2(s1(lType)), TString)
+      val s4 = unify(s3(s2(rType)), TString)
+      (s4.compose(s3).compose(s2).compose(s1), TString)
+    
+    case VDict(entries) =>
+      if (entries.isEmpty) {
+        val keyType = freshTypeVar()
+        val valueType = freshTypeVar()
+        (Substitution.empty, TDict(keyType, valueType))
+      } else {
+        val (firstKey, firstValue) = entries.head
+        val (s1, keyType) = infer(firstKey, env)
+        val (s2, valueType) = infer(firstValue, s1(env))
+        
+        val finalSubst = entries.tail.foldLeft(s2.compose(s1)) {
+          case (accSubst, (k, v)) =>
+            val (sk, kType) = infer(k, accSubst(env))
+            val (sv, vType) = infer(v, sk(accSubst(env)))
+            val s3 = unify(sv(sk(accSubst(keyType))), sv(kType))
+            val s4 = unify(s3(sv(sk(accSubst(valueType)))), s3(sv(vType)))
+            s4.compose(s3).compose(sv).compose(sk).compose(accSubst)
+        }
+        (finalSubst, TDict(finalSubst(keyType), finalSubst(valueType)))
+      }
+    
+    case DictAccess(dict, key) =>
+      val (s1, dictType) = infer(dict, env)
+      val (s2, keyType) = infer(key, s1(env))
+      val expectedKeyType = freshTypeVar()
+      val valueType = freshTypeVar()
+      val s3 = unify(s2(s1(dictType)), TDict(expectedKeyType, valueType))
+      val s4 = unify(s3(s2(keyType)), s3(expectedKeyType))
+      (s4.compose(s3).compose(s2).compose(s1), s4(s3(valueType)))
+    
+    case DictSet(dict, key, value) =>
+      val (s1, dictType) = infer(dict, env)
+      val (s2, keyType) = infer(key, s1(env))
+      val (s3, valueType) = infer(value, s2(s1(env)))
+      val expectedKeyType = freshTypeVar()
+      val expectedValueType = freshTypeVar()
+      val s4 = unify(s3(s2(s1(dictType))), TDict(expectedKeyType, expectedValueType))
+      val s5 = unify(s4(s3(s2(keyType))), s4(expectedKeyType))
+      val s6 = unify(s5(s4(s3(valueType))), s5(s4(expectedValueType)))
+      (s6.compose(s5).compose(s4).compose(s3).compose(s2).compose(s1), 
+       s6(s5(s4(TDict(expectedKeyType, expectedValueType)))))
+    
+    case DictKeys(dict) =>
+      val (s1, dictType) = infer(dict, env)
+      val keyType = freshTypeVar()
+      val valueType = freshTypeVar()
+      val s2 = unify(s1(dictType), TDict(keyType, valueType))
+      (s2.compose(s1), TList(s2(keyType)))
+    
+    case DictValues(dict) =>
+      val (s1, dictType) = infer(dict, env)
+      val keyType = freshTypeVar()
+      val valueType = freshTypeVar()
+      val s2 = unify(s1(dictType), TDict(keyType, valueType))
+      (s2.compose(s1), TList(s2(valueType)))
+    
+    case DictSize(dict) =>
+      val (s1, dictType) = infer(dict, env)
+      val keyType = freshTypeVar()
+      val valueType = freshTypeVar()
+      val s2 = unify(s1(dictType), TDict(keyType, valueType))
+      (s2.compose(s1), TInt)
+    
+    case DictContains(dict, key) =>
+      val (s1, dictType) = infer(dict, env)
+      val (s2, keyType) = infer(key, s1(env))
+      val expectedKeyType = freshTypeVar()
+      val valueType = freshTypeVar()
+      val s3 = unify(s2(s1(dictType)), TDict(expectedKeyType, valueType))
+      val s4 = unify(s3(s2(keyType)), s3(expectedKeyType))
+      (s4.compose(s3).compose(s2).compose(s1), TBool)
+    
+    case Let(name, value, body) =>
+      val (s1, valueType) = infer(value, env)
+      val generalizedType = generalize(s1(env), valueType)
+      val newEnv = s1(env) + (name -> generalizedType)
+      val (s2, bodyType) = infer(body, newEnv)
+      (s2.compose(s1), bodyType)
+    
+    case Lambda(params, body) =>
+      val paramTypes = params.map(_ => freshTypeVar())
+      val paramBindings = params.zip(paramTypes).map {
+        case (name, tpe) => name -> TypeScheme(Nil, tpe)
+      }.toMap
+      val bodyEnv = env ++ paramBindings
+      val (s, bodyType) = infer(body, bodyEnv)
+      val inferredParamTypes = paramTypes.map(s(_))
+      (s, TFunc(inferredParamTypes, bodyType))
+    
+    case Apply(func, args) =>
+      val (s1, funcType) = infer(func, env)
+      val (finalSubst, argTypes) = args.foldLeft((s1, List.empty[Type])) {
+        case ((accSubst, types), arg) =>
+          val (s, t) = infer(arg, accSubst(env))
+          (s.compose(accSubst), types :+ t)
+      }
+      
+      val retType = freshTypeVar()
+      val expectedFuncType = TFunc(argTypes, retType)
+      val s2 = unify(finalSubst(funcType), expectedFuncType)
+      (s2.compose(finalSubst), s2(retType))
+    
+    case _ => sys.error(s"Unhandled expression in type inference: $exp")
+  }
+  
+  def inferWithEnv(exp: Exp, env: TypeEnv): (Substitution, Type, TypeEnv) = exp match {
+    case Assignment(name, expr) =>
+      val (s, t) = infer(expr, env)
+      val generalizedType = generalize(s(env), t)
+      (s, t, s(env) + (name -> generalizedType))
+    
+    case Let(name, value, body) =>
+      val (s1, valueType) = infer(value, env)
+      val generalizedType = generalize(s1(env), valueType)
+      val newEnv = s1(env) + (name -> generalizedType)
+      val (s2, bodyType, finalEnv) = inferWithEnv(body, newEnv)
+      // Let bindings don't affect the outer environment
+      (s2.compose(s1), bodyType, s2(s1(env)))
+    
+    case SeqExp(bodies) if bodies.isEmpty =>
+      (Substitution.empty, TInt, env)
+    
+    case SeqExp(bodies) =>
+      val (finalSubst, finalType, finalEnv) = bodies.foldLeft((Substitution.empty, TInt: Type, env)) {
+        case ((accSubst, _, accEnv), expr) =>
+          val (s, t, newEnv) = inferWithEnv(expr, accSubst(accEnv))
+          (s.compose(accSubst), t, newEnv)
+      }
+      (finalSubst, finalType, finalEnv)
+    
+    case While(condition, bodies) =>
+      val (s1, condType) = infer(condition, env)
+      // Allow truthy types
+      condType match {
+        case TBool | TInt | TString | TList(_) | TDict(_, _) | TVar(_) => // OK
+        case _ => sys.error(s"Type error in while condition: invalid type $condType")
+      }
+      // For while loops, we need to ensure variables assigned inside persist in the environment
+      val (finalSubst, _, finalEnv) = bodies.foldLeft((s1, TInt: Type, env)) { 
+        case ((accSubst, _, accEnv), expr) =>
+          val (s, t, newEnv) = inferWithEnv(expr, accSubst(accEnv))
+          (s.compose(accSubst), t, newEnv)
+      }
+      (finalSubst, TInt, finalEnv)
+      
+    case _ =>
+      val (s, t) = infer(exp, env)
+      (s, t, s(env))
+  }
+  
+  def typeCheckFunction(func: Func, env: TypeEnv): TypeEnv = {
+    // Create environment with function parameters
+    val paramBindings = func.params.map {
+      case (name, tpe) => name -> TypeScheme(Nil, tpe)
     }.toMap
-    val funcEnv = mutable.Map.from(env)
-
-    // Type–check each function definition.
-    functions.foreach { func =>
-      typeCheckFunction(func, funcEnv)
+    
+    val bodyEnv = env ++ paramBindings
+    val (s, bodyType, _) = inferWithEnv(func.body, bodyEnv)
+    
+    // Unify inferred body type with declared return type
+    val s2 = unify(s(bodyType), s(func.returnType))
+    val finalSubst = s2.compose(s)
+    
+    // Update function environment with inferred types
+    val inferredFunc = func.copy(
+      params = func.params.map { case (name, tpe) => name -> finalSubst(tpe) },
+      returnType = finalSubst(func.returnType)
+    )
+    
+    env.copy(funcs = env.funcs + (func.name -> inferredFunc))
+  }
+  
+  def typeCheckProgram(prog: Program): Type = {
+    // Initialize environment with functions
+    val initialFuncs = prog.functions.map(f => f.name -> f).toMap
+    val initialEnv = TypeEnv(Map.empty, initialFuncs)
+    
+    // Type check all functions
+    val funcEnv = prog.functions.foldLeft(initialEnv) { (env, func) =>
+      typeCheckFunction(func, env)
     }
-
-    // Type–check the top–level bodies.
-    val typeEnv = mutable.Map[String, Type]()
-    var resultType: Type = TInt  // default value
-    bodies.foreach { expr =>
-      resultType = typeOf(expr, typeEnv, funcEnv)
+    
+    // Type check main program body
+    val (_, resultType, _) = prog.bodies.foldLeft((Substitution.empty, TInt: Type, funcEnv)) {
+      case ((accSubst, _, env), expr) =>
+        val (s, t, newEnv) = inferWithEnv(expr, accSubst(env))
+        (s.compose(accSubst), t, newEnv)
     }
+    
     resultType
+  }
+  
+  // Compatibility wrapper for old tests
+  def typeOf(e: Exp, typeEnv: mutable.Map[String, Type], funcEnv: mutable.Map[String, Func]): Type = {
+    val vars = typeEnv.map { case (k, v) => k -> TypeScheme(Nil, v) }.toMap
+    val funcs = funcEnv.toMap
+    val env = TypeEnv(vars, funcs)
+    val (_, tpe) = infer(e, env)
+    tpe
+  }
+  
+  def typeCheckFunction(func: Func, funcEnv: mutable.Map[String, Func]): Unit = {
+    val env = TypeEnv(Map.empty, funcEnv.toMap)
+    typeCheckFunction(func, env)
+    ()
   }
 }

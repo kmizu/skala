@@ -20,10 +20,12 @@ class DictTyperSuite extends FunSuite {
 
   test("type check empty dictionary") {
     val dict = tDict()
-    assertEquals(
-      typeOf(dict, mutable.Map.empty, mutable.Map.empty),
-      TDict(TString, TInt) // Default type
-    )
+    val resultType = typeOf(dict, mutable.Map.empty, mutable.Map.empty)
+    // Empty dictionaries now correctly infer to polymorphic types
+    assert(resultType match {
+      case TDict(TVar(_), TVar(_)) => true
+      case _ => false
+    })
   }
 
   test("type check heterogeneous dictionary keys - should fail") {

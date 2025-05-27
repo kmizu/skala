@@ -11,7 +11,11 @@ class ListTyperSuite extends FunSuite {
     val typeEnv = scala.collection.mutable.Map[String, Type]()
     val funcEnv = scala.collection.mutable.Map[String, Func]()
     val resultType = Typer.typeOf(exp, typeEnv, funcEnv)
-    assertEquals(resultType, TList(TInt)) // Default to List[Int]
+    // Empty lists now correctly infer to a polymorphic type
+    assert(resultType match {
+      case TList(TVar(_)) => true
+      case _ => false
+    })
   }
   
   test("list of integers") {
@@ -23,13 +27,12 @@ class ListTyperSuite extends FunSuite {
   }
   
   test("list access type checking") {
-    val exp = tSeq(
+    val prog = tProgram(
+      List(),
       tAssign("lst", tList(tInt(10), tInt(20))),
       tListAccess(tId("lst"), tInt(0))
     )
-    val typeEnv = scala.collection.mutable.Map[String, Type]()
-    val funcEnv = scala.collection.mutable.Map[String, Func]()
-    val resultType = Typer.typeOf(exp, typeEnv, funcEnv)
+    val resultType = Typer.typeCheckProgram(prog)
     assertEquals(resultType, TInt)
   }
   
@@ -42,13 +45,12 @@ class ListTyperSuite extends FunSuite {
   }
   
   test("list append type checking") {
-    val exp = tSeq(
+    val prog = tProgram(
+      List(),
       tAssign("lst", tList(tInt(1), tInt(2))),
       tListAppend(tId("lst"), tInt(3))
     )
-    val typeEnv = scala.collection.mutable.Map[String, Type]()
-    val funcEnv = scala.collection.mutable.Map[String, Func]()
-    val resultType = Typer.typeOf(exp, typeEnv, funcEnv)
+    val resultType = Typer.typeCheckProgram(prog)
     assertEquals(resultType, TList(TInt))
   }
   

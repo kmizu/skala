@@ -31,7 +31,8 @@ def evalExpInt(e: Exp): Int = {
 }
 
 def evalExp(e: Exp): Value = {
-  typeOf(e, mutable.Map.empty, mutable.Map.empty)
+  val initialEnv = TypeEnv(Map.empty, Map.empty)
+  val (_, resultType, _) = inferWithEnv(e, initialEnv)
   eval(e, mutable.Map.empty, mutable.Map.empty)
 }
 
@@ -102,18 +103,34 @@ def eval(e: Exp, vEnv: mutable.Map[String, Value], fEnv: mutable.Map[String, Fun
         env.getOrElse(name, throw new Exception(s"Undefined identifier: $name"))
       // Function calls: evaluate the arguments, create a new environment, bind parameters and evaluate the function body.
       case Exp.Call(name, args) =>
-        fEnv.get(name) match {
-          case Some(Func(_, tParams, _, body)) =>
-            val params = tParams.map(_._1)
+        // First check if it's a variable containing a function value
+        env.get(name) match {
+          case Some(FunctionValue(params, body, closure)) =>
             val argValues = args.map(evalRec(_, env))
-            // Create a new environment that copies the current environment.
-            val newEnv = mutable.Map[String, Value]() ++ env
+            if (params.length != args.length) {
+              throw new Exception(s"Function expects ${params.length} arguments but got ${args.length}")
+            }
+            // Create new environment from closure
+            val newEnv = closure.clone()
             params.zip(argValues).foreach { case (param, argVal) =>
               newEnv(param) = argVal
             }
             evalRec(body, newEnv)
-          case None =>
-            throw new Exception(s"Function $name is not defined")
+          case _ =>
+            // Try regular function lookup
+            fEnv.get(name) match {
+              case Some(Func(_, tParams, _, body)) =>
+                val params = tParams.map(_._1)
+                val argValues = args.map(evalRec(_, env))
+                // Create a new environment that copies the current environment.
+                val newEnv = mutable.Map[String, Value]() ++ env
+                params.zip(argValues).foreach { case (param, argVal) =>
+                  newEnv(param) = argVal
+                }
+                evalRec(body, newEnv)
+              case None =>
+                throw new Exception(s"Function $name is not defined")
+            }
         }
       // Integer literal: return its value.
       case Exp.VInt(value) =>
@@ -177,6 +194,41 @@ def eval(e: Exp, vEnv: mutable.Map[String, Value], fEnv: mutable.Map[String, Fun
         val dictVal = evalRec(dict, env).asDict
         val keyVal = evalRec(key, env)
         IntValue(if (dictVal.contains(keyVal)) 1 else 0)
+      // Let binding: evaluate value, bind to name, evaluate body
+      case Exp.Let(name, value, body) =>
+        val valueResult = evalRec(value, env)
+        val oldValue = env.get(name)
+        env(name) = valueResult
+        val result = evalRec(body, env)
+        // Restore old binding if any
+        oldValue match {
+          case Some(v) => env(name) = v
+          case None => env.remove(name)
+        }
+        result
+      // Lambda: create closure
+      case Exp.Lambda(params, body) =>
+        // Capture current environment
+        val closure = env.clone()
+        FunctionValue(params, body, closure)
+      // Apply: evaluate function and apply to arguments
+      case Exp.Apply(func, args) =>
+        val funcVal = evalRec(func, env)
+        funcVal match {
+          case FunctionValue(params, body, closure) =>
+            val argValues = args.map(evalRec(_, env))
+            if (params.length != args.length) {
+              throw new Exception(s"Function expects ${params.length} arguments but got ${args.length}")
+            }
+            // Create new environment from closure
+            val newEnv = closure.clone()
+            params.zip(argValues).foreach { case (param, argVal) =>
+              newEnv(param) = argVal
+            }
+            evalRec(body, newEnv)
+          case _ =>
+            throw new Exception(s"Attempted to call non-function value: $funcVal")
+        }
     }
   }
   evalRec(e, vEnv)

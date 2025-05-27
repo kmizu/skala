@@ -53,7 +53,7 @@ class TyperSuite extends FunSuite {
     val error = intercept[Exception] {
       typeCheckProgram(prog)
     }
-    assert(error.getMessage.contains("Type error in function call 'negate': expected 1 arguments, got 2"))
+    assert(error.getMessage.contains("expects 1 arguments, got 2"))
   }
 
   test("typeCheckProgram: valid program with integer if condition (truthy/falsy)") {
@@ -83,6 +83,6 @@ class TyperSuite extends FunSuite {
     val error = intercept[Exception] {
       typeCheckProgram(prog)
     }
-    assert(error.getMessage.contains("Type error in if branches: then branch has type TInt but else branch has type TBool"))
+    assert(error.getMessage.contains("Cannot unify TInt with TBool"))
   }
 }
