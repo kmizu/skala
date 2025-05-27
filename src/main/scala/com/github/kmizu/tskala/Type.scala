@@ -5,4 +5,5 @@ enum Type {
   case TBool
   case TString
   case TList(elementType: Type)
+  case TDict(keyType: Type, valueType: Type)
 }

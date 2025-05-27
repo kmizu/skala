@@ -56,21 +56,18 @@ class TyperSuite extends FunSuite {
     assert(error.getMessage.contains("Type error in function call 'negate': expected 1 arguments, got 2"))
   }
 
-  test("typeCheckProgram: invalid program with non-boolean if condition") {
-    // Program: an if expression whose condition is an integer literal (should be Boolean).
+  test("typeCheckProgram: valid program with integer if condition (truthy/falsy)") {
+    // Program: an if expression whose condition is an integer literal (truthy/falsy semantics).
     val prog = tProgram(
       functions = List(),
       bodies = tIf(
-        condition = tInt(1),  // Invalid: condition should be TBool.
+        condition = tInt(1),  // Valid: non-zero is truthy
         thenClause  = tInt(2),
         elseClause  = tInt(3)
       )
     )
-    val error = intercept[Exception] {
-      typeCheckProgram(prog)
-    }
-    // Note: The error message will include the toString of the type, which is "TInt" for an integer.
-    assert(error.getMessage.contains("Type error in if condition: expected Bool, got TInt"))
+    val resultType = typeCheckProgram(prog)
+    assertEquals(resultType, TInt)
   }
 
   test("typeCheckProgram: invalid program with mismatched if branches") {

@@ -11,6 +11,13 @@ def parseType(typeStr: String): Type = typeStr match {
   case s if s.startsWith("TList[") && s.endsWith("]") =>
     val elemTypeStr = s.substring(6, s.length - 1)
     TList(parseType(elemTypeStr))
+  case s if s.startsWith("TDict[") && s.endsWith("]") =>
+    val typesStr = s.substring(6, s.length - 1)
+    val commaIndex = typesStr.indexOf(',')
+    if (commaIndex == -1) throw new Exception(s"Invalid dict type: $s")
+    val keyTypeStr = typesStr.substring(0, commaIndex).trim
+    val valueTypeStr = typesStr.substring(commaIndex + 1).trim
+    TDict(parseType(keyTypeStr), parseType(valueTypeStr))
   case _ => throw new Exception(s"Unknown type: $typeStr")
 }
 
@@ -86,6 +93,37 @@ def translateToAst(json: JsValue): Exp = json match {
           case "string-concat" | "++" =>
             // Expecting: ["string-concat", str1, str2] or ["++", str1, str2]
             tStringConcat(translateToAst(values(1)), translateToAst(values(2)))
+          case "dict" =>
+            // Expecting: ["dict", key1, value1, key2, value2, ...]
+            val kvPairs = values.tail.toList
+            if (kvPairs.length % 2 != 0) {
+              throw new Exception("Dict must have even number of key-value arguments")
+            }
+            val entries = kvPairs.grouped(2).map { group =>
+              group match {
+                case List(k: JsValue, v: JsValue) => (translateToAst(k), translateToAst(v))
+                case _ => throw new Exception("Invalid dict entry")
+              }
+            }.toSeq
+            tDict(entries*)
+          case "dict-access" =>
+            // Expecting: ["dict-access", dict, key]
+            tDictAccess(translateToAst(values(1)), translateToAst(values(2)))
+          case "dict-set" =>
+            // Expecting: ["dict-set", dict, key, value]
+            tDictSet(translateToAst(values(1)), translateToAst(values(2)), translateToAst(values(3)))
+          case "dict-keys" =>
+            // Expecting: ["dict-keys", dict]
+            tDictKeys(translateToAst(values(1)))
+          case "dict-values" =>
+            // Expecting: ["dict-values", dict]
+            tDictValues(translateToAst(values(1)))
+          case "dict-size" =>
+            // Expecting: ["dict-size", dict]
+            tDictSize(translateToAst(values(1)))
+          case "dict-contains" =>
+            // Expecting: ["dict-contains", dict, key]
+            tDictContains(translateToAst(values(1)), translateToAst(values(2)))
           case other =>
             throw new Exception(s"Unknown operator: $other")
       case _ =>

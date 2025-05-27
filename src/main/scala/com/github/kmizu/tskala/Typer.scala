@@ -57,8 +57,11 @@ object Typer {
       // If–expressions: the condition must be Boolean and the two branches must have the same type.
       case If(condition, thenClause, elseClause) =>
         val condType = typeOfRec(condition)
-        if (condType != TBool)
-          sys.error(s"Type error in if condition: expected Bool, got $condType")
+        // Allow Bool, Int, String, List, and Dict types in if conditions (truthy/falsy semantics)
+        condType match {
+          case TBool | TInt | TString | TList(_) | TDict(_, _) => // OK
+          case _ => sys.error(s"Type error in if condition: expected Bool, got $condType")
+        }
         val thenType = typeOfRec(thenClause)
         val elseType = typeOfRec(elseClause)
         if (thenType != elseType)
@@ -75,8 +78,11 @@ object Typer {
       // (Since the evaluator returns 0 for while loops, we assign them type TInt.)
       case While(condition, bodies) =>
         val condType = typeOfRec(condition)
-        if (condType != TBool)
-          sys.error(s"Type error in while condition: expected Bool, got $condType")
+        // Allow Bool, Int, String, List, and Dict types in while conditions (truthy/falsy semantics)
+        condType match {
+          case TBool | TInt | TString | TList(_) | TDict(_, _) => // OK
+          case _ => sys.error(s"Type error in while condition: expected Bool, got $condType")
+        }
         bodies.foreach { expr =>
           typeOfRec(expr)
         }
@@ -165,6 +171,82 @@ object Typer {
         if (lType != TString || rType != TString)
           sys.error(s"Type error in string concatenation: expected String operands, got $lType and $rType")
         TString
+      // Dictionary literal: all keys must have same type, all values must have same type
+      case VDict(entries) =>
+        if (entries.isEmpty) {
+          // Empty dict - default to Dict[String, Int]
+          TDict(TString, TInt)
+        } else {
+          val (firstKey, firstValue) = entries.head
+          val keyType = typeOfRec(firstKey)
+          val valueType = typeOfRec(firstValue)
+          entries.tail.foreach { case (k, v) =>
+            val kType = typeOfRec(k)
+            val vType = typeOfRec(v)
+            if (kType != keyType)
+              sys.error(s"Type error in dict literal: all keys must have the same type, but found $keyType and $kType")
+            if (vType != valueType)
+              sys.error(s"Type error in dict literal: all values must have the same type, but found $valueType and $vType")
+          }
+          TDict(keyType, valueType)
+        }
+      // Dictionary access: dict[key]
+      case DictAccess(dict, key) =>
+        val dictType = typeOfRec(dict)
+        val keyType = typeOfRec(key)
+        dictType match {
+          case TDict(expectedKeyType, valueType) =>
+            if (keyType != expectedKeyType)
+              sys.error(s"Type error in dict access: expected key of type $expectedKeyType, got $keyType")
+            valueType
+          case _ => sys.error(s"Type error in dict access: expected Dict type, got $dictType")
+        }
+      // Dictionary set: returns updated dictionary
+      case DictSet(dict, key, value) =>
+        val dictType = typeOfRec(dict)
+        val keyType = typeOfRec(key)
+        val valueType = typeOfRec(value)
+        dictType match {
+          case TDict(expectedKeyType, expectedValueType) =>
+            if (keyType != expectedKeyType)
+              sys.error(s"Type error in dict set: expected key of type $expectedKeyType, got $keyType")
+            if (valueType != expectedValueType)
+              sys.error(s"Type error in dict set: expected value of type $expectedValueType, got $valueType")
+            dictType
+          case _ => sys.error(s"Type error in dict set: expected Dict type, got $dictType")
+        }
+      // Dictionary keys: returns List of keys
+      case DictKeys(dict) =>
+        val dictType = typeOfRec(dict)
+        dictType match {
+          case TDict(keyType, _) => TList(keyType)
+          case _ => sys.error(s"Type error in dict keys: expected Dict type, got $dictType")
+        }
+      // Dictionary values: returns List of values
+      case DictValues(dict) =>
+        val dictType = typeOfRec(dict)
+        dictType match {
+          case TDict(_, valueType) => TList(valueType)
+          case _ => sys.error(s"Type error in dict values: expected Dict type, got $dictType")
+        }
+      // Dictionary size: returns Int
+      case DictSize(dict) =>
+        val dictType = typeOfRec(dict)
+        dictType match {
+          case TDict(_, _) => TInt
+          case _ => sys.error(s"Type error in dict size: expected Dict type, got $dictType")
+        }
+      // Dictionary contains: returns Bool
+      case DictContains(dict, key) =>
+        val dictType = typeOfRec(dict)
+        val keyType = typeOfRec(key)
+        dictType match {
+          case TDict(expectedKeyType, _) =>
+            if (keyType != expectedKeyType)
+              sys.error(s"Type error in dict contains: expected key of type $expectedKeyType, got $keyType")
+            TBool
+          case _ => sys.error(s"Type error in dict contains: expected Dict type, got $dictType")
+        }
     }
     typeOfRec(e)
   }
