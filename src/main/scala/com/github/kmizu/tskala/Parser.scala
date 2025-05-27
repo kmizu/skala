@@ -13,7 +13,7 @@ case object EOF extends Token
 
 // Lexer for tokenization
 object Lexer {
-  private val keywords = Set("if", "else", "while", "function", "length", "append", "Int", "Bool", "String", "List")
+  private val keywords = Set("if", "else", "while", "function", "length", "append", "Int", "Bool", "String", "List", "Dict", "keys", "values", "size", "contains")
 
   def tokenize(src: String): List[Token] = {
     val tokens = ListBuffer[Token]()
@@ -96,7 +96,7 @@ object Lexer {
             tokens += Symbol("+")
             i += 1
           }
-        case c @ ('-' | '*' | '/' | '(' | ')' | '{' | '}' | ';' | ',' | '[' | ']') =>
+        case c @ ('-' | '*' | '/' | '(' | ')' | '{' | '}' | ';' | ',' | '[' | ']' | ':') =>
           tokens += Symbol(c.toString)
           i += 1
         case _ =>
@@ -115,6 +115,8 @@ object Parser {
     private var pos = 0
     
     def peek: Token = if (pos < tokens.length) tokens(pos) else EOF
+    def peekAt(offset: Int): Option[Token] = 
+      if (pos + offset < tokens.length) Some(tokens(pos + offset)) else None
     def consume(): Token = { val t = peek; pos += 1; t }
 
     def expectSymbol(sym: String): Either[ParseError, Unit] = peek match {
@@ -239,6 +241,14 @@ object Parser {
           val elemType = parseType()
           ts.expectSymbolOrFail("]")
           Type.TList(elemType)
+        case Keyword("Dict") =>
+          ts.consume()
+          ts.expectSymbolOrFail("[")
+          val keyType = parseType()
+          ts.expectSymbolOrFail(",")
+          val valueType = parseType()
+          ts.expectSymbolOrFail("]")
+          Type.TDict(keyType, valueType)
         case t =>
           throw ParseError(s"Expected type but found $t")
       }
@@ -357,7 +367,12 @@ object Parser {
         ts.expectSymbolOrFail(")")
         e
       case Symbol("{") =>
-        parseBlock()
+        // Look ahead to distinguish between block and dictionary
+        if (isDictionary()) {
+          parseDict()
+        } else {
+          parseBlock()
+        }
       case Keyword("if") =>
         ts.consume()
         ts.expectSymbolOrFail("(")
@@ -391,6 +406,32 @@ object Parser {
         val element = parseExpression()
         ts.expectSymbolOrFail(")")
         Exp.ListAppend(list, element)
+      case Keyword("keys") =>
+        ts.consume()
+        ts.expectSymbolOrFail("(")
+        val dict = parseExpression()
+        ts.expectSymbolOrFail(")")
+        Exp.DictKeys(dict)
+      case Keyword("values") =>
+        ts.consume()
+        ts.expectSymbolOrFail("(")
+        val dict = parseExpression()
+        ts.expectSymbolOrFail(")")
+        Exp.DictValues(dict)
+      case Keyword("size") =>
+        ts.consume()
+        ts.expectSymbolOrFail("(")
+        val dict = parseExpression()
+        ts.expectSymbolOrFail(")")
+        Exp.DictSize(dict)
+      case Keyword("contains") =>
+        ts.consume()
+        ts.expectSymbolOrFail("(")
+        val dict = parseExpression()
+        ts.expectSymbolOrFail(",")
+        val key = parseExpression()
+        ts.expectSymbolOrFail(")")
+        Exp.DictContains(dict, key)
       case t =>
         sys.error(s"Unexpected token: $t")
     }
@@ -403,6 +444,42 @@ object Parser {
         ts.acceptSymbol(";")
       }
       Exp.SeqExp(exprs.toList)
+    }
+
+    private def isDictionary(): Boolean = {
+      // For simplicity, treat {} as a dictionary and {expr...} as a block
+      // unless we see a colon pattern
+      var i = 1
+      while (ts.peekAt(i) match {
+        case Some(Symbol("}")) => return true // Empty braces = dict
+        case Some(Symbol(":")) => return true // Found colon = dict
+        case Some(Symbol(";")) => return false // Found semicolon = block
+        case Some(_) => i += 1; true
+        case None => return false
+      }) {}
+      false
+    }
+
+    private def parseDict(): Exp = {
+      ts.expectSymbolOrFail("{")
+      val entries = ListBuffer[(Exp, Exp)]()
+      if (!ts.acceptSymbol("}")) {
+        // Parse first entry
+        val key = parseExpression()
+        ts.expectSymbolOrFail(":")
+        val value = parseExpression()
+        entries += ((key, value))
+        
+        // Parse remaining entries
+        while (ts.acceptSymbol(",")) {
+          val k = parseExpression()
+          ts.expectSymbolOrFail(":")
+          val v = parseExpression()
+          entries += ((k, v))
+        }
+        ts.expectSymbolOrFail("}")
+      }
+      Exp.VDict(entries.toList)
     }
 
     private def parseBlockOrExp(): Exp = ts.peek match {

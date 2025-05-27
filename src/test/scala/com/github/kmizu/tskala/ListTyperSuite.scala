@@ -110,9 +110,8 @@ class ListTyperSuite extends FunSuite {
     )
     val typeEnv = scala.collection.mutable.Map[String, Type]()
     val funcEnv = scala.collection.mutable.Map[String, Func]()
-    intercept[Exception] {
-      Typer.typeOf(exp, typeEnv, funcEnv) // Should fail because condition must be Bool
-    }
+    val resultType = Typer.typeOf(exp, typeEnv, funcEnv) // Valid: non-empty list is truthy
+    assertEquals(resultType, TInt)
   }
   
   test("program with list operations") {

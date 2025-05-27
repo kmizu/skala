@@ -146,6 +146,37 @@ def eval(e: Exp, vEnv: mutable.Map[String, Value], fEnv: mutable.Map[String, Fun
       // String concatenation: concatenate two strings
       case Exp.StringConcat(lhs, rhs) =>
         StringValue(evalRec(lhs, env).asString + evalRec(rhs, env).asString)
+      // Dictionary literal: evaluate all key-value pairs
+      case Exp.VDict(entries) =>
+        val evaluatedEntries = entries.map { case (k, v) =>
+          (evalRec(k, env), evalRec(v, env))
+        }
+        DictValue(evaluatedEntries.toMap)
+      // Dictionary access: get value for key
+      case Exp.DictAccess(dict, key) =>
+        val dictVal = evalRec(dict, env).asDict
+        val keyVal = evalRec(key, env)
+        dictVal.getOrElse(keyVal, throw new RuntimeException(s"Key not found in dictionary: $keyVal"))
+      // Dictionary set: create new dictionary with updated key-value pair
+      case Exp.DictSet(dict, key, value) =>
+        val dictVal = evalRec(dict, env).asDict
+        val keyVal = evalRec(key, env)
+        val valueVal = evalRec(value, env)
+        DictValue(dictVal + (keyVal -> valueVal))
+      // Dictionary keys: return list of all keys
+      case Exp.DictKeys(dict) =>
+        ListValue(evalRec(dict, env).asDict.keys.toList)
+      // Dictionary values: return list of all values
+      case Exp.DictValues(dict) =>
+        ListValue(evalRec(dict, env).asDict.values.toList)
+      // Dictionary size: return the number of entries
+      case Exp.DictSize(dict) =>
+        IntValue(evalRec(dict, env).asDict.size)
+      // Dictionary contains: check if key exists
+      case Exp.DictContains(dict, key) =>
+        val dictVal = evalRec(dict, env).asDict
+        val keyVal = evalRec(key, env)
+        IntValue(if (dictVal.contains(keyVal)) 1 else 0)
     }
   }
   evalRec(e, vEnv)
