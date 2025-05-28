@@ -7,7 +7,7 @@ class TypeInferenceSuite extends munit.FunSuite:
   import Type.*
 
   def inferType(exp: Exp): Type =
-    val (_, tpe) = Typer.infer(exp, Typer.TypeEnv(Map.empty, Map.empty))
+    val (_, tpe) = Typer.infer(exp, TypeEnv(Map.empty[String, TypeScheme], Map.empty[String, Func]))
     tpe
 
   def inferProgramType(program: Program): Type =

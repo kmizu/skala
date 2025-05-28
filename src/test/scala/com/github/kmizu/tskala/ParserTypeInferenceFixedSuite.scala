@@ -11,7 +11,7 @@ class ParserTypeInferenceFixedSuite extends munit.FunSuite:
 
   def parseAndInferType(code: String): Type =
     val exp = Parser.parseExp(code)
-    val (_, tpe) = Typer.infer(exp, Typer.TypeEnv(Map.empty, Map.empty))
+    val (_, tpe) = Typer.infer(exp, TypeEnv(Map.empty[String, TypeScheme], Map.empty[String, Func]))
     tpe
 
   def parseAndInferProgramType(code: String): Type =
